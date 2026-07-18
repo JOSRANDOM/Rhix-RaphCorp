@@ -1,0 +1,4 @@
+.env
+/rhix-worker
+/rhix-api
+*.exe
