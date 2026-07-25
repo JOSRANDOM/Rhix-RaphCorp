@@ -18,7 +18,7 @@ import (
 func main() {
 	_ = godotenv.Load() // no-op en Railway; útil en local si existe .env
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadWorker()
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}

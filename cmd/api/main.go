@@ -20,7 +20,7 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadAPI()
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
