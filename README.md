@@ -31,9 +31,17 @@ migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 ## Estado actual
 
 - [x] **Fase 1** — scaffold, conexión a Postgres (Supabase), lock, repositorio de recibos, migración inicial.
-- [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria. Ningún correo se marca como leído todavía.
-- [ ] **Fase 3** — parsear el XML/UBL de cada adjunto (`internal/parser`, pendiente) y persistir vía `internal/receipt`; recién ahí marcar el correo como `SEEN` (`inbox.Session.MarkSeen`, ya implementado y a la espera de que Fase 3 lo llame).
+- [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria.
+- [x] **Fase 3** — parser UBL de Recibo por Honorarios Electrónico (`internal/parser`), persistencia vía `internal/receipt` con manejo de duplicados, y `MarkSeen` solo tras persistir con éxito. Verificado extremo a extremo contra Gmail y Supabase reales.
 - [ ] **Fase 4** — endpoint de exportación a `.xlsx` (`internal/excel`, pendiente) en `cmd/api`.
+
+### Nota sobre el Transaction Pooler
+
+`internal/db` fuerza `pgx.QueryExecModeSimpleProtocol`. Es necesario: el modo
+por defecto de pgx usa sentencias preparadas nombradas, que el Transaction
+Pooler de Supabase (PgBouncer en modo transacción) no soporta entre
+conexiones — sin esto, la segunda corrida del worker falla con `prepared
+statement already exists`.
 
 ## Requisitos
 
