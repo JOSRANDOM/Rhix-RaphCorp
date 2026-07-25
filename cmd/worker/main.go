@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"rhix-backend/internal/config"
+	"rhix-backend/internal/inbox"
 	"rhix-backend/internal/lock"
 )
 
@@ -44,9 +45,25 @@ func main() {
 
 	log.Println("lock adquirido, iniciando procesamiento de correos...")
 
-	// TODO Fase 2: conectar por IMAP (internal/imap), listar UNSEEN.
-	// TODO Fase 3: por cada adjunto .xml, parsear (internal/parser) y persistir (internal/receipt).
-	// TODO: marcar el correo como SEEN solo después de persistir con éxito.
+	session, err := inbox.Connect(cfg)
+	if err != nil {
+		log.Fatalf("conectando al buzón IMAP: %v", err)
+	}
+	defer session.Close()
+
+	pending, err := session.FetchPendingXML()
+	if err != nil {
+		log.Fatalf("listando correos pendientes: %v", err)
+	}
+
+	log.Printf("%d correo(s) sin leer con adjuntos .xml", len(pending))
+	for _, email := range pending {
+		log.Printf("UID %d — %q (%d adjunto(s))", email.UID, email.Subject, len(email.Attachments))
+	}
+
+	// TODO Fase 3: por cada adjunto .xml, parsear (internal/parser) y persistir
+	// (internal/receipt), y llamar a session.MarkSeen(email.UID) solo después
+	// de persistir con éxito.
 
 	log.Println("ciclo de procesamiento terminado")
 }
