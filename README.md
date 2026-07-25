@@ -1,0 +1,86 @@
+# Rhix — backend
+
+Ingesta automática de Recibos por Honorarios (XML/UBL de SUNAT) recibidos por
+correo. Un worker lee un buzón IMAP dedicado, extrae los adjuntos `.xml` de
+los correos sin leer, los persiste en Postgres, y una API delgada expone lo
+ya procesado al frontend.
+
+## Arquitectura
+
+Dos binarios independientes, mismo módulo Go:
+
+- **`cmd/worker`** — Cron Job de corta duración (pensado para Railway Cron).
+  Cada corrida: toma un `pg_try_advisory_lock` para evitar solaparse con otra
+  corrida en curso, se conecta por IMAP, busca los correos `UNSEEN`, extrae
+  los adjuntos `.xml`, y (fase futura) los parsea y persiste.
+- **`cmd/api`** — servicio web persistente. Solo lee lo que el worker ya
+  persistió; no tiene ni necesita credenciales IMAP.
+
+```
+cmd/
+  api/main.go      # GET /health, GET /api/receipts
+  worker/main.go   # ciclo de ingesta
+internal/
+  config/          # carga y valida env vars (separado por binario)
+  lock/            # advisory lock de Postgres, anti-solapamiento
+  inbox/           # sesión IMAP: login, SEARCH UNSEEN, FETCH, extrae adjuntos .xml
+  receipt/         # modelo Receipt + repositorio (Exists/Create/List)
+migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
+```
+
+## Estado actual
+
+- [x] **Fase 1** — scaffold, conexión a Postgres (Supabase), lock, repositorio de recibos, migración inicial.
+- [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria. Ningún correo se marca como leído todavía.
+- [ ] **Fase 3** — parsear el XML/UBL de cada adjunto (`internal/parser`, pendiente) y persistir vía `internal/receipt`; recién ahí marcar el correo como `SEEN` (`inbox.Session.MarkSeen`, ya implementado y a la espera de que Fase 3 lo llame).
+- [ ] **Fase 4** — endpoint de exportación a `.xlsx` (`internal/excel`, pendiente) en `cmd/api`.
+
+## Requisitos
+
+- Go (ver `go.mod` para la versión exacta)
+- Un proyecto de Supabase (Postgres) — usar el connection string del
+  **Transaction Pooler** (puerto `6543`), no la conexión directa.
+- Un buzón de Gmail dedicado con verificación en 2 pasos activada y una
+  **contraseña de aplicación** generada (no la contraseña normal de la cuenta).
+
+## Configuración local
+
+```bash
+cp .env.example .env
+```
+
+Completa `.env` con:
+
+| Variable | De dónde sale |
+|---|---|
+| `DATABASE_URL` | Supabase → Project Settings → Database → Connection string → **Transaction Pooler** |
+| `IMAP_HOST` / `IMAP_PORT` | `imap.gmail.com` / `993` |
+| `IMAP_USER` | el correo del buzón dedicado |
+| `IMAP_PASSWORD` | contraseña de aplicación de Gmail (16 caracteres, sin espacios) |
+| `PORT` | solo local; en Railway la inyecta la plataforma |
+
+`cmd/api` solo requiere `DATABASE_URL`. `cmd/worker` requiere además las
+variables `IMAP_*`.
+
+## Migraciones
+
+No hay herramienta de migraciones automatizada todavía — los archivos en
+`migrations/` se corren a mano contra la base:
+
+```bash
+set -a && source .env && set +a
+psql "$DATABASE_URL" -f migrations/0001_create_receipts.sql
+```
+
+## Correr en local
+
+```bash
+go run ./cmd/worker   # un ciclo de ingesta y termina
+go run ./cmd/api      # queda escuchando en :8080 ($PORT)
+```
+
+## Deploy
+
+Pensado para Railway:
+- `cmd/worker` como **Cron Job** (proceso corto, no daemon).
+- `cmd/api` como **servicio web** persistente.
