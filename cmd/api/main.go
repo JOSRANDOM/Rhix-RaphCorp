@@ -6,9 +6,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 
@@ -67,6 +70,49 @@ func main() {
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 		w.Header().Set("Content-Disposition", `attachment; filename="recibos.xlsx"`)
 		w.Write(xlsxBytes)
+	})
+
+	mux.HandleFunc("GET /api/receipts/{id}/xml", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+
+		rawXML, err := repo.GetRawXML(r.Context(), id)
+		if errors.Is(err, receipt.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/xml")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="recibo-%d.xml"`, id))
+		w.Write([]byte(rawXML))
+	})
+
+	mux.HandleFunc("GET /api/receipts/{id}/email", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+
+		email, err := repo.GetEmail(r.Context(), id)
+		if errors.Is(err, receipt.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(email)
 	})
 
 	port := os.Getenv("PORT")

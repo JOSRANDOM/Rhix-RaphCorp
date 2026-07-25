@@ -1,5 +1,6 @@
 // Package inbox conecta al buzón IMAP dedicado y extrae, de los correos sin
-// leer, los adjuntos .xml listos para que el parser de Fase 3 los procese.
+// leer, los adjuntos .xml y los datos del correo (remitente, destinatarios,
+// asunto, cuerpo) listos para que el parser de Fase 3 los procese.
 package inbox
 
 import (
@@ -26,6 +27,10 @@ type PendingEmail struct {
 	UID         imap.UID
 	MessageID   string
 	Subject     string
+	From        string
+	To          string
+	Cc          string
+	Body        string
 	Attachments []XMLAttachment
 }
 
@@ -64,8 +69,8 @@ func (s *Session) Close() error {
 }
 
 // FetchPendingXML busca los correos UNSEEN y devuelve, para cada uno que
-// tenga adjuntos .xml, sus datos y adjuntos ya extraídos en memoria. No
-// marca ningún correo como SEEN.
+// tenga adjuntos .xml, sus datos (remitente, destinatarios, asunto, cuerpo)
+// y adjuntos ya extraídos en memoria. No marca ningún correo como SEEN.
 func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 	searchData, err := s.client.UIDSearch(&imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen},
@@ -131,7 +136,7 @@ func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 			continue
 		}
 
-		attachments, err := extractXMLAttachments(body)
+		attachments, textBody, err := extractParts(body)
 		if err != nil {
 			return nil, fmt.Errorf("leyendo correo UID %d: %w", uid, err)
 		}
@@ -139,10 +144,13 @@ func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 			continue
 		}
 
-		email := PendingEmail{UID: uid, Attachments: attachments}
+		email := PendingEmail{UID: uid, Attachments: attachments, Body: textBody}
 		if envelope != nil {
 			email.Subject = envelope.Subject
 			email.MessageID = envelope.MessageID
+			email.From = formatAddresses(envelope.From)
+			email.To = formatAddresses(envelope.To)
+			email.Cc = formatAddresses(envelope.Cc)
 		}
 		pending = append(pending, email)
 	}
@@ -164,39 +172,70 @@ func (s *Session) MarkSeen(uid imap.UID) error {
 	return s.client.Store(imap.UIDSetNum(uid), &storeFlags, nil).Close()
 }
 
-func extractXMLAttachments(body io.Reader) ([]XMLAttachment, error) {
+// extractParts recorre las partes MIME del correo: junta el texto de las
+// partes inline (el cuerpo) y separa los adjuntos .xml.
+func extractParts(body io.Reader) ([]XMLAttachment, string, error) {
 	mr, err := mail.CreateReader(body)
 	if err != nil {
-		return nil, fmt.Errorf("parseando mensaje: %w", err)
+		return nil, "", fmt.Errorf("parseando mensaje: %w", err)
 	}
 
 	var attachments []XMLAttachment
+	var bodyText strings.Builder
+
 	for {
 		p, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parseando parte del mensaje: %w", err)
+			return nil, "", fmt.Errorf("parseando parte del mensaje: %w", err)
 		}
 
-		header, ok := p.Header.(*mail.AttachmentHeader)
-		if !ok {
-			continue
-		}
+		switch h := p.Header.(type) {
+		case *mail.InlineHeader:
+			contentType, _, _ := h.ContentType()
+			if contentType != "text/plain" {
+				continue
+			}
+			text, err := io.ReadAll(p.Body)
+			if err != nil {
+				return nil, "", fmt.Errorf("leyendo cuerpo del mensaje: %w", err)
+			}
+			if bodyText.Len() > 0 {
+				bodyText.WriteString("\n")
+			}
+			bodyText.Write(text)
 
-		filename, err := header.Filename()
-		if err != nil || !strings.HasSuffix(strings.ToLower(filename), ".xml") {
-			continue
+		case *mail.AttachmentHeader:
+			filename, err := h.Filename()
+			if err != nil || !strings.HasSuffix(strings.ToLower(filename), ".xml") {
+				continue
+			}
+			content, err := io.ReadAll(p.Body)
+			if err != nil {
+				return nil, "", fmt.Errorf("leyendo adjunto %s: %w", filename, err)
+			}
+			attachments = append(attachments, XMLAttachment{Filename: filename, Content: content})
 		}
-
-		content, err := io.ReadAll(p.Body)
-		if err != nil {
-			return nil, fmt.Errorf("leyendo adjunto %s: %w", filename, err)
-		}
-
-		attachments = append(attachments, XMLAttachment{Filename: filename, Content: content})
 	}
 
-	return attachments, nil
+	return attachments, bodyText.String(), nil
+}
+
+// formatAddresses arma "Nombre <mailbox@host>" por cada dirección, separadas
+// por coma. Devuelve "" si la lista viene vacía (p. ej. sin copia).
+func formatAddresses(addrs []imap.Address) string {
+	parts := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		addr := a.Addr()
+		if a.Name != "" && addr != "" {
+			parts = append(parts, fmt.Sprintf("%s <%s>", a.Name, addr))
+		} else if addr != "" {
+			parts = append(parts, addr)
+		} else if a.Name != "" {
+			parts = append(parts, a.Name)
+		}
+	}
+	return strings.Join(parts, ", ")
 }

@@ -108,6 +108,11 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			RawXML:         string(att.Content),
 			Status:         receipt.StatusProcessed,
 			EmailMessageID: email.MessageID,
+			EmailFrom:      email.From,
+			EmailTo:        email.To,
+			EmailCc:        email.Cc,
+			EmailSubject:   email.Subject,
+			EmailBody:      email.Body,
 		}
 
 		if err := repo.Create(ctx, rcpt); err != nil {
