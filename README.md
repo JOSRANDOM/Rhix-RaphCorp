@@ -39,7 +39,7 @@ migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 - [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria.
 - [x] **Fase 3** — parser UBL de Recibo por Honorarios Electrónico (`internal/parser`), persistencia vía `internal/receipt` con manejo de duplicados, y `MarkSeen` solo tras persistir con éxito. Verificado extremo a extremo contra Gmail y Supabase reales.
 - [x] **Fase 4** — `GET /api/receipts/export` (`internal/excel`, con `xuri/excelize`) descarga un `.xlsx` con todos los recibos.
-- [x] **Correo original** — `GET /api/receipts/{id}/xml` (el XML crudo) y `GET /api/receipts/{id}/email` (from/to/cc/asunto/cuerpo + lista de adjuntos del mismo correo) para verlo todo desde el frontend. Solo aplica a recibos procesados desde que se agregó esto — los anteriores no tienen estos datos guardados.
+- [x] **Correo original** — `GET /api/receipts/{id}/xml` (el XML crudo), `GET /api/receipts/{id}/pdf` (el PDF, si el correo traía uno) y `GET /api/receipts/{id}/email` (from/to/cc/asunto/cuerpo + lista de adjuntos del mismo correo, con `hasPdf`) para verlo todo desde el frontend. Solo aplica a recibos procesados desde que se agregó esto — los anteriores no tienen estos datos guardados.
 
 ### Nota sobre el Transaction Pooler
 
@@ -85,6 +85,7 @@ No hay herramienta de migraciones automatizada todavía — los archivos en
 set -a && source .env && set +a
 psql "$DATABASE_URL" -f migrations/0001_create_receipts.sql
 psql "$DATABASE_URL" -f migrations/0002_add_email_details.sql
+psql "$DATABASE_URL" -f migrations/0003_add_raw_pdf.sql
 ```
 
 ## Correr en local
