@@ -8,12 +8,14 @@ import (
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
 	"rhix-backend/internal/config"
+	"rhix-backend/internal/db"
 	"rhix-backend/internal/inbox"
 	"rhix-backend/internal/lock"
+	"rhix-backend/internal/parser"
+	"rhix-backend/internal/receipt"
 )
 
 func main() {
@@ -27,9 +29,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	conn, err := pgx.Connect(ctx, cfg.DatabaseURL)
+	conn, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("conectando a Postgres: %v", err)
+		log.Fatal(err)
 	}
 	defer conn.Close(ctx)
 
@@ -57,13 +59,65 @@ func main() {
 	}
 
 	log.Printf("%d correo(s) sin leer con adjuntos .xml", len(pending))
+
+	repo := receipt.NewRepository(conn)
+
 	for _, email := range pending {
-		log.Printf("UID %d — %q (%d adjunto(s))", email.UID, email.Subject, len(email.Attachments))
+		if processEmail(ctx, repo, email) {
+			if err := session.MarkSeen(email.UID); err != nil {
+				log.Printf("UID %d: no se pudo marcar como leído: %v", email.UID, err)
+			}
+		}
 	}
 
-	// TODO Fase 3: por cada adjunto .xml, parsear (internal/parser) y persistir
-	// (internal/receipt), y llamar a session.MarkSeen(email.UID) solo después
-	// de persistir con éxito.
-
 	log.Println("ciclo de procesamiento terminado")
+}
+
+// processEmail parsea y persiste cada adjunto .xml de un correo. Devuelve
+// true solo si todos los adjuntos se persistieron con éxito (o ya existían),
+// es decir, si el correo puede marcarse como SEEN sin perder nada por reintentar.
+func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.PendingEmail) bool {
+	allOK := true
+
+	for _, att := range email.Attachments {
+		parsed, err := parser.Parse(att.Content)
+		if err != nil {
+			log.Printf("UID %d, adjunto %q: error al parsear: %v", email.UID, att.Filename, err)
+			allOK = false
+			continue
+		}
+
+		exists, err := repo.Exists(ctx, parsed.RUC, parsed.SerieNumero)
+		if err != nil {
+			log.Printf("UID %d, adjunto %q: error verificando duplicado: %v", email.UID, att.Filename, err)
+			allOK = false
+			continue
+		}
+		if exists {
+			log.Printf("UID %d, adjunto %q: recibo %s-%s ya existía, se omite", email.UID, att.Filename, parsed.RUC, parsed.SerieNumero)
+			continue
+		}
+
+		rcpt := receipt.Receipt{
+			RUC:            parsed.RUC,
+			RazonSocial:    parsed.RazonSocial,
+			SerieNumero:    parsed.SerieNumero,
+			FechaEmision:   parsed.FechaEmision,
+			MontoNeto:      parsed.MontoNeto,
+			Retencion:      parsed.Retencion,
+			RawXML:         string(att.Content),
+			Status:         receipt.StatusProcessed,
+			EmailMessageID: email.MessageID,
+		}
+
+		if err := repo.Create(ctx, rcpt); err != nil {
+			log.Printf("UID %d, adjunto %q: error al persistir: %v", email.UID, att.Filename, err)
+			allOK = false
+			continue
+		}
+
+		log.Printf("UID %d, adjunto %q: recibo %s-%s persistido", email.UID, att.Filename, parsed.RUC, parsed.SerieNumero)
+	}
+
+	return allOK
 }

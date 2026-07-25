@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
 	"rhix-backend/internal/config"
+	"rhix-backend/internal/db"
 	"rhix-backend/internal/receipt"
 )
 
@@ -26,9 +26,9 @@ func main() {
 	}
 
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, cfg.DatabaseURL)
+	conn, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("conectando a Postgres: %v", err)
+		log.Fatal(err)
 	}
 	defer conn.Close(ctx)
 

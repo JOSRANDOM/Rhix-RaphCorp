@@ -3,6 +3,7 @@
 package inbox
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -113,7 +114,16 @@ func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 			case imapclient.FetchItemDataEnvelope:
 				envelope = item.Envelope
 			case imapclient.FetchItemDataBodySection:
-				body = item.Literal
+				// go-message necesita poder retroceder/re-leer al recorrer las
+				// partes MIME; el Literal del cliente IMAP es un stream de una
+				// sola pasada atado a la conexión, y entregárselo tal cual corta
+				// la lectura del multipart antes de llegar a los adjuntos. Hay
+				// que bufferizarlo primero.
+				raw, err := io.ReadAll(item.Literal)
+				if err != nil {
+					return nil, fmt.Errorf("leyendo cuerpo del correo: %w", err)
+				}
+				body = bytes.NewReader(raw)
 			}
 		}
 
