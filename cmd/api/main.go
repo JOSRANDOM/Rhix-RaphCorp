@@ -14,6 +14,7 @@ import (
 
 	"rhix-backend/internal/config"
 	"rhix-backend/internal/db"
+	"rhix-backend/internal/excel"
 	"rhix-backend/internal/receipt"
 )
 
@@ -50,7 +51,23 @@ func main() {
 		json.NewEncoder(w).Encode(receipts)
 	})
 
-	// TODO Fase 4: GET /api/receipts/export -> genera el xlsx con internal/excel.
+	mux.HandleFunc("GET /api/receipts/export", func(w http.ResponseWriter, r *http.Request) {
+		receipts, err := repo.List(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		xlsxBytes, err := excel.GenerateReceiptsXLSX(receipts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		w.Header().Set("Content-Disposition", `attachment; filename="recibos.xlsx"`)
+		w.Write(xlsxBytes)
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

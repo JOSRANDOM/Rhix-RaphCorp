@@ -18,13 +18,16 @@ Dos binarios independientes, mismo módulo Go:
 
 ```
 cmd/
-  api/main.go      # GET /health, GET /api/receipts
+  api/main.go      # GET /health, GET /api/receipts, GET /api/receipts/export
   worker/main.go   # ciclo de ingesta
 internal/
   config/          # carga y valida env vars (separado por binario)
   lock/            # advisory lock de Postgres, anti-solapamiento
   inbox/           # sesión IMAP: login, SEARCH UNSEEN, FETCH, extrae adjuntos .xml
+  parser/          # interpreta el XML UBL de un Recibo por Honorarios Electrónico
   receipt/         # modelo Receipt + repositorio (Exists/Create/List)
+  excel/           # genera el .xlsx exportable
+  db/              # conexión a Postgres (protocolo simple, ver nota abajo)
 migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 ```
 
@@ -33,7 +36,7 @@ migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 - [x] **Fase 1** — scaffold, conexión a Postgres (Supabase), lock, repositorio de recibos, migración inicial.
 - [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria.
 - [x] **Fase 3** — parser UBL de Recibo por Honorarios Electrónico (`internal/parser`), persistencia vía `internal/receipt` con manejo de duplicados, y `MarkSeen` solo tras persistir con éxito. Verificado extremo a extremo contra Gmail y Supabase reales.
-- [ ] **Fase 4** — endpoint de exportación a `.xlsx` (`internal/excel`, pendiente) en `cmd/api`.
+- [x] **Fase 4** — `GET /api/receipts/export` (`internal/excel`, con `xuri/excelize`) descarga un `.xlsx` con todos los recibos.
 
 ### Nota sobre el Transaction Pooler
 
