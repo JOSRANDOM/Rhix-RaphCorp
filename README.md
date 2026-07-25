@@ -29,6 +29,7 @@ internal/
   parser/          # interpreta el XML UBL de un Recibo por Honorarios Electrónico
   receipt/         # modelo Receipt + repositorio (Exists/Create/List)
   excel/           # genera el .xlsx exportable
+  storage/         # sube/descarga del bucket de Supabase Storage
   db/              # conexión a Postgres (protocolo simple, ver nota abajo)
 migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 ```
@@ -39,7 +40,8 @@ migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 - [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria.
 - [x] **Fase 3** — parser UBL de Recibo por Honorarios Electrónico (`internal/parser`), persistencia vía `internal/receipt` con manejo de duplicados, y `MarkSeen` solo tras persistir con éxito. Verificado extremo a extremo contra Gmail y Supabase reales.
 - [x] **Fase 4** — `GET /api/receipts/export` (`internal/excel`, con `xuri/excelize`) descarga un `.xlsx` con todos los recibos.
-- [x] **Correo original** — `GET /api/receipts/{id}/xml` (el XML crudo), `GET /api/receipts/{id}/pdf` (el PDF, si el correo traía uno) y `GET /api/receipts/{id}/email` (from/to/cc/asunto/cuerpo + lista de adjuntos del mismo correo, con `hasPdf`) para verlo todo desde el frontend. Solo aplica a recibos procesados desde que se agregó esto — los anteriores no tienen estos datos guardados.
+- [x] **Correo original** — `GET /api/receipts/{id}/xml`, `GET /api/receipts/{id}/pdf` y `GET /api/receipts/{id}/email` (from/to/cc/asunto/cuerpo + lista de adjuntos del mismo correo, con `hasPdf`) para verlo todo desde el frontend. Solo aplica a recibos procesados desde que se agregó esto — los anteriores no tienen estos datos guardados.
+- [x] **Supabase Storage** — los XML/PDF de los recibos nuevos se suben al bucket privado `recibos` (`internal/storage`) en vez de guardarse directo en la fila (`{ruc}/{serieNumero}.xml` / `.pdf`). Los recibos persistidos antes de esto siguen leyéndose de las columnas viejas (`raw_xml`/`raw_pdf`) como respaldo — `GetXMLLocation`/`GetPDFLocation` deciden de dónde leer.
 
 ### Nota sobre el Transaction Pooler
 
@@ -68,12 +70,16 @@ Completa `.env` con:
 | Variable | De dónde sale |
 |---|---|
 | `DATABASE_URL` | Supabase → Project Settings → Database → Connection string → **Transaction Pooler** |
+| `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API → **service_role** (la secreta, no la `anon`). Nunca exponer al frontend. |
+| `SUPABASE_STORAGE_BUCKET` | nombre del bucket **privado** donde se guardan los archivos (`recibos`) |
 | `IMAP_HOST` / `IMAP_PORT` | `imap.gmail.com` / `993` |
 | `IMAP_USER` | el correo del buzón dedicado |
 | `IMAP_PASSWORD` | contraseña de aplicación de Gmail (16 caracteres, sin espacios) |
 | `PORT` | solo local; en Railway la inyecta la plataforma |
 
-`cmd/api` solo requiere `DATABASE_URL`. `cmd/worker` requiere además las
+`cmd/api` requiere `DATABASE_URL` + las variables de Supabase Storage (sirve
+los archivos leyéndolos del bucket). `cmd/worker` requiere además las
 variables `IMAP_*`.
 
 ## Migraciones
@@ -86,7 +92,10 @@ set -a && source .env && set +a
 psql "$DATABASE_URL" -f migrations/0001_create_receipts.sql
 psql "$DATABASE_URL" -f migrations/0002_add_email_details.sql
 psql "$DATABASE_URL" -f migrations/0003_add_raw_pdf.sql
+psql "$DATABASE_URL" -f migrations/0004_add_storage_paths.sql
 ```
+
+También hay que crear el bucket **privado** `recibos` en Supabase (Storage → New bucket, "Public bucket" desactivado) antes de correr el worker.
 
 ## Correr en local
 

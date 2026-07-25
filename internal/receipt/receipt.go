@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ErrNotFound indica que no existe un recibo con el ID solicitado.
+// ErrNotFound indica que no existe un recibo (o un archivo suyo) con el ID solicitado.
 var ErrNotFound = errors.New("recibo no encontrado")
 
 type Status string
@@ -29,8 +29,8 @@ type Receipt struct {
 	FechaEmision   time.Time `json:"fechaEmision"`
 	MontoNeto      float64   `json:"montoNeto"`
 	Retencion      *float64  `json:"retencion,omitempty"`
-	RawXML         string    `json:"-"`
-	RawPDF         []byte    `json:"-"`
+	XMLStoragePath string    `json:"-"`
+	PDFStoragePath string    `json:"-"`
 	HasPDF         bool      `json:"hasPdf"`
 	Status         Status    `json:"status"`
 	ErrorMessage   *string   `json:"errorMessage,omitempty"`
@@ -65,6 +65,21 @@ type EmailAttachment struct {
 	HasPDF      bool   `json:"hasPdf"`
 }
 
+// XMLLocation indica dónde está el XML de un recibo: en el bucket de Storage
+// (StoragePath no vacío, el caso normal desde que existe internal/storage) o
+// guardado directo en la fila (RawXML, recibos persistidos antes de eso).
+type XMLLocation struct {
+	StoragePath string
+	RawXML      *string
+}
+
+// PDFLocation es el equivalente de XMLLocation para el PDF. Puede no haber
+// ninguno de los dos (el correo no traía PDF).
+type PDFLocation struct {
+	StoragePath string
+	RawPDF      []byte
+}
+
 type Repository struct {
 	conn *pgx.Conn
 }
@@ -89,16 +104,23 @@ func (r *Repository) Create(ctx context.Context, rcpt Receipt) error {
 	if rcpt.EmailCc != "" {
 		emailCc = &rcpt.EmailCc
 	}
+	var xmlPath, pdfPath *string
+	if rcpt.XMLStoragePath != "" {
+		xmlPath = &rcpt.XMLStoragePath
+	}
+	if rcpt.PDFStoragePath != "" {
+		pdfPath = &rcpt.PDFStoragePath
+	}
 
 	_, err := r.conn.Exec(ctx, `
 		INSERT INTO receipts
-			(ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, raw_xml, status, error_message, email_message_id,
-			 email_from, email_to, email_cc, email_subject, email_body, raw_pdf)
+			(ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, status, error_message, email_message_id,
+			 email_from, email_to, email_cc, email_subject, email_body, xml_storage_path, pdf_storage_path)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (ruc, serie_numero) DO NOTHING`,
 		rcpt.RUC, rcpt.RazonSocial, rcpt.SerieNumero, rcpt.FechaEmision,
-		rcpt.MontoNeto, rcpt.Retencion, rcpt.RawXML, rcpt.Status, rcpt.ErrorMessage, rcpt.EmailMessageID,
-		rcpt.EmailFrom, rcpt.EmailTo, emailCc, rcpt.EmailSubject, rcpt.EmailBody, rcpt.RawPDF,
+		rcpt.MontoNeto, rcpt.Retencion, rcpt.Status, rcpt.ErrorMessage, rcpt.EmailMessageID,
+		rcpt.EmailFrom, rcpt.EmailTo, emailCc, rcpt.EmailSubject, rcpt.EmailBody, xmlPath, pdfPath,
 	)
 	return err
 }
@@ -106,7 +128,7 @@ func (r *Repository) Create(ctx context.Context, rcpt Receipt) error {
 func (r *Repository) List(ctx context.Context) ([]Receipt, error) {
 	rows, err := r.conn.Query(ctx, `
 		SELECT id, ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, status, email_message_id, created_at,
-		       raw_pdf IS NOT NULL AS has_pdf
+		       (raw_pdf IS NOT NULL OR pdf_storage_path IS NOT NULL) AS has_pdf
 		FROM receipts ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -126,17 +148,46 @@ func (r *Repository) List(ctx context.Context) ([]Receipt, error) {
 	return out, rows.Err()
 }
 
-// GetRawXML devuelve el XML original de un recibo, para verlo/descargarlo.
-func (r *Repository) GetRawXML(ctx context.Context, id int64) (string, error) {
-	var rawXML string
-	err := r.conn.QueryRow(ctx, `SELECT raw_xml FROM receipts WHERE id = $1`, id).Scan(&rawXML)
+// GetXMLLocation dice de dónde leer el XML de un recibo (bucket o columna vieja).
+func (r *Repository) GetXMLLocation(ctx context.Context, id int64) (XMLLocation, error) {
+	var loc XMLLocation
+	var storagePath *string
+	err := r.conn.QueryRow(ctx,
+		`SELECT xml_storage_path, raw_xml FROM receipts WHERE id = $1`, id,
+	).Scan(&storagePath, &loc.RawXML)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		return XMLLocation{}, ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return XMLLocation{}, err
 	}
-	return rawXML, nil
+	if storagePath != nil {
+		loc.StoragePath = *storagePath
+	}
+	return loc, nil
+}
+
+// GetPDFLocation dice de dónde leer el PDF de un recibo (bucket o columna
+// vieja). Devuelve ErrNotFound si el recibo no tiene PDF en ningún lado.
+func (r *Repository) GetPDFLocation(ctx context.Context, id int64) (PDFLocation, error) {
+	var loc PDFLocation
+	var storagePath *string
+	err := r.conn.QueryRow(ctx,
+		`SELECT pdf_storage_path, raw_pdf FROM receipts WHERE id = $1`, id,
+	).Scan(&storagePath, &loc.RawPDF)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PDFLocation{}, ErrNotFound
+	}
+	if err != nil {
+		return PDFLocation{}, err
+	}
+	if storagePath != nil {
+		loc.StoragePath = *storagePath
+	}
+	if loc.StoragePath == "" && loc.RawPDF == nil {
+		return PDFLocation{}, ErrNotFound
+	}
+	return loc, nil
 }
 
 // GetEmail devuelve los datos del correo original de un recibo, más la lista
@@ -159,7 +210,7 @@ func (r *Repository) GetEmail(ctx context.Context, id int64) (EmailDetail, error
 	}
 
 	rows, err := r.conn.Query(ctx,
-		`SELECT id, serie_numero, raw_pdf IS NOT NULL AS has_pdf
+		`SELECT id, serie_numero, (raw_pdf IS NOT NULL OR pdf_storage_path IS NOT NULL) AS has_pdf
 		 FROM receipts WHERE email_message_id = $1 ORDER BY id`,
 		messageID,
 	)
@@ -180,20 +231,4 @@ func (r *Repository) GetEmail(ctx context.Context, id int64) (EmailDetail, error
 	}
 
 	return detail, nil
-}
-
-// GetRawPDF devuelve el PDF original de un recibo, si el correo traía uno.
-func (r *Repository) GetRawPDF(ctx context.Context, id int64) ([]byte, error) {
-	var rawPDF []byte
-	err := r.conn.QueryRow(ctx, `SELECT raw_pdf FROM receipts WHERE id = $1`, id).Scan(&rawPDF)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	if rawPDF == nil {
-		return nil, ErrNotFound
-	}
-	return rawPDF, nil
 }

@@ -19,6 +19,7 @@ import (
 	"rhix-backend/internal/db"
 	"rhix-backend/internal/excel"
 	"rhix-backend/internal/receipt"
+	"rhix-backend/internal/storage"
 )
 
 func main() {
@@ -37,6 +38,7 @@ func main() {
 	defer conn.Close(ctx)
 
 	repo := receipt.NewRepository(conn)
+	storageClient := storage.New(cfg)
 
 	mux := http.NewServeMux()
 
@@ -79,7 +81,7 @@ func main() {
 			return
 		}
 
-		rawXML, err := repo.GetRawXML(r.Context(), id)
+		loc, err := repo.GetXMLLocation(r.Context(), id)
 		if errors.Is(err, receipt.ErrNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -89,9 +91,23 @@ func main() {
 			return
 		}
 
+		var content []byte
+		if loc.StoragePath != "" {
+			content, err = storageClient.Download(r.Context(), loc.StoragePath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else if loc.RawXML != nil {
+			content = []byte(*loc.RawXML)
+		} else {
+			http.Error(w, "este recibo no tiene XML guardado", http.StatusNotFound)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/xml")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="recibo-%d.xml"`, id))
-		w.Write([]byte(rawXML))
+		w.Write(content)
 	})
 
 	mux.HandleFunc("GET /api/receipts/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +117,7 @@ func main() {
 			return
 		}
 
-		rawPDF, err := repo.GetRawPDF(r.Context(), id)
+		loc, err := repo.GetPDFLocation(r.Context(), id)
 		if errors.Is(err, receipt.ErrNotFound) {
 			http.Error(w, "este recibo no tiene PDF", http.StatusNotFound)
 			return
@@ -111,9 +127,20 @@ func main() {
 			return
 		}
 
+		var content []byte
+		if loc.StoragePath != "" {
+			content, err = storageClient.Download(r.Context(), loc.StoragePath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			content = loc.RawPDF
+		}
+
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="recibo-%d.pdf"`, id))
-		w.Write(rawPDF)
+		w.Write(content)
 	})
 
 	mux.HandleFunc("GET /api/receipts/{id}/email", func(w http.ResponseWriter, r *http.Request) {

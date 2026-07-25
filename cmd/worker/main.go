@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"rhix-backend/internal/lock"
 	"rhix-backend/internal/parser"
 	"rhix-backend/internal/receipt"
+	"rhix-backend/internal/storage"
 )
 
 func main() {
@@ -61,9 +63,10 @@ func main() {
 	log.Printf("%d correo(s) sin leer con adjuntos .xml", len(pending))
 
 	repo := receipt.NewRepository(conn)
+	storageClient := storage.New(cfg)
 
 	for _, email := range pending {
-		if processEmail(ctx, repo, email) {
+		if processEmail(ctx, repo, storageClient, email) {
 			if err := session.MarkSeen(email.UID); err != nil {
 				log.Printf("UID %d: no se pudo marcar como leído: %v", email.UID, err)
 			}
@@ -73,10 +76,11 @@ func main() {
 	log.Println("ciclo de procesamiento terminado")
 }
 
-// processEmail parsea y persiste cada adjunto .xml de un correo. Devuelve
-// true solo si todos los adjuntos se persistieron con éxito (o ya existían),
-// es decir, si el correo puede marcarse como SEEN sin perder nada por reintentar.
-func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.PendingEmail) bool {
+// processEmail parsea, sube al bucket y persiste cada adjunto .xml de un
+// correo. Devuelve true solo si todos los adjuntos se manejaron con éxito (o
+// ya existían), es decir, si el correo puede marcarse como SEEN sin perder
+// nada por reintentar.
+func processEmail(ctx context.Context, repo *receipt.Repository, storageClient *storage.Client, email inbox.PendingEmail) bool {
 	allOK := true
 
 	// Si el correo trae exactamente un PDF, lo asociamos a cada recibo que
@@ -106,6 +110,23 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			continue
 		}
 
+		xmlPath := fmt.Sprintf("%s/%s.xml", parsed.RUC, parsed.SerieNumero)
+		if err := storageClient.Upload(ctx, xmlPath, att.Content, "application/xml"); err != nil {
+			log.Printf("UID %d, adjunto %q: error subiendo XML al bucket: %v", email.UID, att.Filename, err)
+			allOK = false
+			continue
+		}
+
+		var pdfPath string
+		if pdfContent != nil {
+			pdfPath = fmt.Sprintf("%s/%s.pdf", parsed.RUC, parsed.SerieNumero)
+			if err := storageClient.Upload(ctx, pdfPath, pdfContent, "application/pdf"); err != nil {
+				log.Printf("UID %d, adjunto %q: error subiendo PDF al bucket: %v", email.UID, att.Filename, err)
+				allOK = false
+				continue
+			}
+		}
+
 		rcpt := receipt.Receipt{
 			RUC:            parsed.RUC,
 			RazonSocial:    parsed.RazonSocial,
@@ -113,7 +134,8 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			FechaEmision:   parsed.FechaEmision,
 			MontoNeto:      parsed.MontoNeto,
 			Retencion:      parsed.Retencion,
-			RawXML:         string(att.Content),
+			XMLStoragePath: xmlPath,
+			PDFStoragePath: pdfPath,
 			Status:         receipt.StatusProcessed,
 			EmailMessageID: email.MessageID,
 			EmailFrom:      email.From,
@@ -121,7 +143,6 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			EmailCc:        email.Cc,
 			EmailSubject:   email.Subject,
 			EmailBody:      email.Body,
-			RawPDF:         pdfContent,
 		}
 
 		if err := repo.Create(ctx, rcpt); err != nil {
@@ -130,7 +151,7 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			continue
 		}
 
-		log.Printf("UID %d, adjunto %q: recibo %s-%s persistido", email.UID, att.Filename, parsed.RUC, parsed.SerieNumero)
+		log.Printf("UID %d, adjunto %q: recibo %s-%s persistido (bucket: %s)", email.UID, att.Filename, parsed.RUC, parsed.SerieNumero, xmlPath)
 	}
 
 	return allOK
