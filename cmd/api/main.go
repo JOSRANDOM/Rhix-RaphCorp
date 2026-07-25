@@ -57,5 +57,19 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("API escuchando en :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, withCORS(mux)))
+}
+
+// withCORS permite que el frontend (otro origen) consuma esta API. No hay
+// cookies ni credenciales involucradas — todo lo que expone esta API es
+// lectura pública de recibos ya procesados.
+func withCORS(next http.Handler) http.Handler {
+	origin := os.Getenv("CORS_ORIGIN")
+	if origin == "" {
+		origin = "*"
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		next.ServeHTTP(w, r)
+	})
 }

@@ -18,18 +18,18 @@ const (
 )
 
 type Receipt struct {
-	ID             int64
-	RUC            string
-	RazonSocial    string
-	SerieNumero    string
-	FechaEmision   time.Time
-	MontoNeto      float64
-	Retencion      *float64
-	RawXML         string
-	Status         Status
-	ErrorMessage   *string
-	EmailMessageID string
-	CreatedAt      time.Time
+	ID             int64     `json:"id"`
+	RUC            string    `json:"ruc"`
+	RazonSocial    string    `json:"razonSocial"`
+	SerieNumero    string    `json:"serieNumero"`
+	FechaEmision   time.Time `json:"fechaEmision"`
+	MontoNeto      float64   `json:"montoNeto"`
+	Retencion      *float64  `json:"retencion,omitempty"`
+	RawXML         string    `json:"-"`
+	Status         Status    `json:"status"`
+	ErrorMessage   *string   `json:"errorMessage,omitempty"`
+	EmailMessageID string    `json:"emailMessageId"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type Repository struct {
