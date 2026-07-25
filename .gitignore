@@ -3,3 +3,6 @@
 /rhix-api
 *.exe
 CLAUDE.md
+
+# Contiene datos personales reales (RUC, nombre, dirección) — no va al repo público.
+internal/parser/testdata/recibo_real_sunat.xml

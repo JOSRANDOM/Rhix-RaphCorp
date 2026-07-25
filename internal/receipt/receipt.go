@@ -30,6 +30,8 @@ type Receipt struct {
 	MontoNeto      float64   `json:"montoNeto"`
 	Retencion      *float64  `json:"retencion,omitempty"`
 	RawXML         string    `json:"-"`
+	RawPDF         []byte    `json:"-"`
+	HasPDF         bool      `json:"hasPdf"`
 	Status         Status    `json:"status"`
 	ErrorMessage   *string   `json:"errorMessage,omitempty"`
 	EmailMessageID string    `json:"emailMessageId"`
@@ -60,6 +62,7 @@ type EmailDetail struct {
 type EmailAttachment struct {
 	ID          int64  `json:"id"`
 	SerieNumero string `json:"serieNumero"`
+	HasPDF      bool   `json:"hasPdf"`
 }
 
 type Repository struct {
@@ -90,19 +93,20 @@ func (r *Repository) Create(ctx context.Context, rcpt Receipt) error {
 	_, err := r.conn.Exec(ctx, `
 		INSERT INTO receipts
 			(ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, raw_xml, status, error_message, email_message_id,
-			 email_from, email_to, email_cc, email_subject, email_body)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 email_from, email_to, email_cc, email_subject, email_body, raw_pdf)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (ruc, serie_numero) DO NOTHING`,
 		rcpt.RUC, rcpt.RazonSocial, rcpt.SerieNumero, rcpt.FechaEmision,
 		rcpt.MontoNeto, rcpt.Retencion, rcpt.RawXML, rcpt.Status, rcpt.ErrorMessage, rcpt.EmailMessageID,
-		rcpt.EmailFrom, rcpt.EmailTo, emailCc, rcpt.EmailSubject, rcpt.EmailBody,
+		rcpt.EmailFrom, rcpt.EmailTo, emailCc, rcpt.EmailSubject, rcpt.EmailBody, rcpt.RawPDF,
 	)
 	return err
 }
 
 func (r *Repository) List(ctx context.Context) ([]Receipt, error) {
 	rows, err := r.conn.Query(ctx, `
-		SELECT id, ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, status, email_message_id, created_at
+		SELECT id, ruc, razon_social, serie_numero, fecha_emision, monto_neto, retencion, status, email_message_id, created_at,
+		       raw_pdf IS NOT NULL AS has_pdf
 		FROM receipts ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -114,7 +118,7 @@ func (r *Repository) List(ctx context.Context) ([]Receipt, error) {
 		var rcpt Receipt
 		if err := rows.Scan(&rcpt.ID, &rcpt.RUC, &rcpt.RazonSocial, &rcpt.SerieNumero,
 			&rcpt.FechaEmision, &rcpt.MontoNeto, &rcpt.Retencion, &rcpt.Status,
-			&rcpt.EmailMessageID, &rcpt.CreatedAt); err != nil {
+			&rcpt.EmailMessageID, &rcpt.CreatedAt, &rcpt.HasPDF); err != nil {
 			return nil, err
 		}
 		out = append(out, rcpt)
@@ -155,7 +159,8 @@ func (r *Repository) GetEmail(ctx context.Context, id int64) (EmailDetail, error
 	}
 
 	rows, err := r.conn.Query(ctx,
-		`SELECT id, serie_numero FROM receipts WHERE email_message_id = $1 ORDER BY id`,
+		`SELECT id, serie_numero, raw_pdf IS NOT NULL AS has_pdf
+		 FROM receipts WHERE email_message_id = $1 ORDER BY id`,
 		messageID,
 	)
 	if err != nil {
@@ -165,7 +170,7 @@ func (r *Repository) GetEmail(ctx context.Context, id int64) (EmailDetail, error
 
 	for rows.Next() {
 		var att EmailAttachment
-		if err := rows.Scan(&att.ID, &att.SerieNumero); err != nil {
+		if err := rows.Scan(&att.ID, &att.SerieNumero, &att.HasPDF); err != nil {
 			return EmailDetail{}, err
 		}
 		detail.Attachments = append(detail.Attachments, att)
@@ -175,4 +180,20 @@ func (r *Repository) GetEmail(ctx context.Context, id int64) (EmailDetail, error
 	}
 
 	return detail, nil
+}
+
+// GetRawPDF devuelve el PDF original de un recibo, si el correo traía uno.
+func (r *Repository) GetRawPDF(ctx context.Context, id int64) ([]byte, error) {
+	var rawPDF []byte
+	err := r.conn.QueryRow(ctx, `SELECT raw_pdf FROM receipts WHERE id = $1`, id).Scan(&rawPDF)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if rawPDF == nil {
+		return nil, ErrNotFound
+	}
+	return rawPDF, nil
 }

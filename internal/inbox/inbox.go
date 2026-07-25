@@ -1,6 +1,6 @@
 // Package inbox conecta al buzón IMAP dedicado y extrae, de los correos sin
-// leer, los adjuntos .xml y los datos del correo (remitente, destinatarios,
-// asunto, cuerpo) listos para que el parser de Fase 3 los procese.
+// leer, los adjuntos .xml y .pdf y los datos del correo (remitente,
+// destinatarios, asunto, cuerpo) listos para que el parser de Fase 3 los procese.
 package inbox
 
 import (
@@ -22,16 +22,23 @@ type XMLAttachment struct {
 	Content  []byte
 }
 
+// PDFAttachment es un adjunto .pdf encontrado en un correo.
+type PDFAttachment struct {
+	Filename string
+	Content  []byte
+}
+
 // PendingEmail es un correo UNSEEN con al menos un adjunto .xml.
 type PendingEmail struct {
-	UID         imap.UID
-	MessageID   string
-	Subject     string
-	From        string
-	To          string
-	Cc          string
-	Body        string
-	Attachments []XMLAttachment
+	UID            imap.UID
+	MessageID      string
+	Subject        string
+	From           string
+	To             string
+	Cc             string
+	Body           string
+	Attachments    []XMLAttachment
+	PDFAttachments []PDFAttachment
 }
 
 // Session mantiene una conexión IMAP abierta durante todo el ciclo del
@@ -136,7 +143,7 @@ func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 			continue
 		}
 
-		attachments, textBody, err := extractParts(body)
+		attachments, pdfAttachments, textBody, err := extractParts(body)
 		if err != nil {
 			return nil, fmt.Errorf("leyendo correo UID %d: %w", uid, err)
 		}
@@ -144,7 +151,7 @@ func (s *Session) FetchPendingXML() ([]PendingEmail, error) {
 			continue
 		}
 
-		email := PendingEmail{UID: uid, Attachments: attachments, Body: textBody}
+		email := PendingEmail{UID: uid, Attachments: attachments, PDFAttachments: pdfAttachments, Body: textBody}
 		if envelope != nil {
 			email.Subject = envelope.Subject
 			email.MessageID = envelope.MessageID
@@ -173,14 +180,15 @@ func (s *Session) MarkSeen(uid imap.UID) error {
 }
 
 // extractParts recorre las partes MIME del correo: junta el texto de las
-// partes inline (el cuerpo) y separa los adjuntos .xml.
-func extractParts(body io.Reader) ([]XMLAttachment, string, error) {
+// partes inline (el cuerpo) y separa los adjuntos .xml y .pdf.
+func extractParts(body io.Reader) ([]XMLAttachment, []PDFAttachment, string, error) {
 	mr, err := mail.CreateReader(body)
 	if err != nil {
-		return nil, "", fmt.Errorf("parseando mensaje: %w", err)
+		return nil, nil, "", fmt.Errorf("parseando mensaje: %w", err)
 	}
 
 	var attachments []XMLAttachment
+	var pdfAttachments []PDFAttachment
 	var bodyText strings.Builder
 
 	for {
@@ -189,7 +197,7 @@ func extractParts(body io.Reader) ([]XMLAttachment, string, error) {
 			break
 		}
 		if err != nil {
-			return nil, "", fmt.Errorf("parseando parte del mensaje: %w", err)
+			return nil, nil, "", fmt.Errorf("parseando parte del mensaje: %w", err)
 		}
 
 		switch h := p.Header.(type) {
@@ -200,7 +208,7 @@ func extractParts(body io.Reader) ([]XMLAttachment, string, error) {
 			}
 			text, err := io.ReadAll(p.Body)
 			if err != nil {
-				return nil, "", fmt.Errorf("leyendo cuerpo del mensaje: %w", err)
+				return nil, nil, "", fmt.Errorf("leyendo cuerpo del mensaje: %w", err)
 			}
 			if bodyText.Len() > 0 {
 				bodyText.WriteString("\n")
@@ -209,18 +217,30 @@ func extractParts(body io.Reader) ([]XMLAttachment, string, error) {
 
 		case *mail.AttachmentHeader:
 			filename, err := h.Filename()
-			if err != nil || !strings.HasSuffix(strings.ToLower(filename), ".xml") {
+			if err != nil {
 				continue
 			}
-			content, err := io.ReadAll(p.Body)
-			if err != nil {
-				return nil, "", fmt.Errorf("leyendo adjunto %s: %w", filename, err)
+			lowerName := strings.ToLower(filename)
+
+			switch {
+			case strings.HasSuffix(lowerName, ".xml"):
+				content, err := io.ReadAll(p.Body)
+				if err != nil {
+					return nil, nil, "", fmt.Errorf("leyendo adjunto %s: %w", filename, err)
+				}
+				attachments = append(attachments, XMLAttachment{Filename: filename, Content: content})
+
+			case strings.HasSuffix(lowerName, ".pdf"):
+				content, err := io.ReadAll(p.Body)
+				if err != nil {
+					return nil, nil, "", fmt.Errorf("leyendo adjunto %s: %w", filename, err)
+				}
+				pdfAttachments = append(pdfAttachments, PDFAttachment{Filename: filename, Content: content})
 			}
-			attachments = append(attachments, XMLAttachment{Filename: filename, Content: content})
 		}
 	}
 
-	return attachments, bodyText.String(), nil
+	return attachments, pdfAttachments, bodyText.String(), nil
 }
 
 // formatAddresses arma "Nombre <mailbox@host>" por cada dirección, separadas

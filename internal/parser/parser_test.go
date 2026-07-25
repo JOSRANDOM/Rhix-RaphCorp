@@ -62,6 +62,43 @@ func TestParse_ReciboSinRetencion(t *testing.T) {
 	}
 }
 
+// TestParse_EstructuraSUNAT usa un fixture con la misma estructura que un XML
+// real de Recibo por Honorarios Electrónico emitido vía SUNAT/Llama.pe (datos
+// ficticios, la estructura es lo que importa). Difiere del fixture sintético
+// original: el RUC/razón social del emisor van directo bajo
+// AccountingSupplierParty (CustomerAssignedAccountID) y Party/PartyName, no
+// en PartyIdentification/PartyLegalEntity; y la retención va en un
+// TaxSubtotal con TaxCategory ID "RET 4TA", no en AllowanceCharge.
+func TestParse_EstructuraSUNAT(t *testing.T) {
+	parsed, err := Parse(mustReadFixture(t, "recibo_estructura_sunat.xml"))
+	if err != nil {
+		t.Fatalf("Parse devolvió error inesperado: %v", err)
+	}
+
+	if parsed.RUC != "10000000001" {
+		t.Errorf("RUC = %q, esperaba %q", parsed.RUC, "10000000001")
+	}
+	if parsed.RazonSocial != "NOMBRE APELLIDO DE PRUEBA" {
+		t.Errorf("RazonSocial = %q, esperaba %q", parsed.RazonSocial, "NOMBRE APELLIDO DE PRUEBA")
+	}
+	if parsed.SerieNumero != "E001-1" {
+		t.Errorf("SerieNumero = %q, esperaba %q", parsed.SerieNumero, "E001-1")
+	}
+	wantFecha := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	if !parsed.FechaEmision.Equal(wantFecha) {
+		t.Errorf("FechaEmision = %v, esperaba %v", parsed.FechaEmision, wantFecha)
+	}
+	if parsed.MontoNeto != 230.00 {
+		t.Errorf("MontoNeto = %v, esperaba %v", parsed.MontoNeto, 230.00)
+	}
+	if parsed.Retencion == nil {
+		t.Fatal("Retencion = nil, esperaba 20.00 (categoría RET 4TA en el InvoiceLine)")
+	}
+	if *parsed.Retencion != 20.00 {
+		t.Errorf("Retencion = %v, esperaba %v", *parsed.Retencion, 20.00)
+	}
+}
+
 func TestParse_XMLInvalido(t *testing.T) {
 	_, err := Parse([]byte("esto no es XML"))
 	if err == nil {

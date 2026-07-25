@@ -79,6 +79,14 @@ func main() {
 func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.PendingEmail) bool {
 	allOK := true
 
+	// Si el correo trae exactamente un PDF, lo asociamos a cada recibo que
+	// salga de este correo (el caso normal: un XML + su PDF del mismo
+	// documento). Con cero o más de un PDF no adivinamos a cuál corresponde.
+	var pdfContent []byte
+	if len(email.PDFAttachments) == 1 {
+		pdfContent = email.PDFAttachments[0].Content
+	}
+
 	for _, att := range email.Attachments {
 		parsed, err := parser.Parse(att.Content)
 		if err != nil {
@@ -113,6 +121,7 @@ func processEmail(ctx context.Context, repo *receipt.Repository, email inbox.Pen
 			EmailCc:        email.Cc,
 			EmailSubject:   email.Subject,
 			EmailBody:      email.Body,
+			RawPDF:         pdfContent,
 		}
 
 		if err := repo.Create(ctx, rcpt); err != nil {

@@ -94,6 +94,28 @@ func main() {
 		w.Write([]byte(rawXML))
 	})
 
+	mux.HandleFunc("GET /api/receipts/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "id inválido", http.StatusBadRequest)
+			return
+		}
+
+		rawPDF, err := repo.GetRawPDF(r.Context(), id)
+		if errors.Is(err, receipt.ErrNotFound) {
+			http.Error(w, "este recibo no tiene PDF", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="recibo-%d.pdf"`, id))
+		w.Write(rawPDF)
+	})
+
 	mux.HandleFunc("GET /api/receipts/{id}/email", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {

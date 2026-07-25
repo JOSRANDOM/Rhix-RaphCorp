@@ -1,5 +1,5 @@
 // Package parser extrae los datos de un Recibo por Honorarios Electrónico
-// (UBL 2.1, InvoiceTypeCode "02") desde su XML adjunto.
+// (UBL 2.1, InvoiceTypeCode "01"/"02" según el emisor) desde su XML adjunto.
 package parser
 
 import (
@@ -22,6 +22,12 @@ type Parsed struct {
 }
 
 // Parse interpreta el XML UBL de un Recibo por Honorarios Electrónico.
+//
+// La estructura no está 100% estandarizada entre proveedores: algunos ponen
+// el RUC/razón social del emisor en cac:Party/cac:PartyIdentification +
+// PartyLegalEntity, otros (como el que emite SUNAT/Llama.pe) lo ponen en
+// cbc:CustomerAssignedAccountID directo bajo AccountingSupplierParty y en
+// cac:Party/cac:PartyName. Probamos ambas formas.
 func Parse(xmlBytes []byte) (*Parsed, error) {
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(xmlBytes); err != nil {
@@ -47,19 +53,25 @@ func Parse(xmlBytes []byte) (*Parsed, error) {
 		return nil, fmt.Errorf("cbc:IssueDate inválida %q: %w", fechaText, err)
 	}
 
-	supplier := root.FindElement("./cac:AccountingSupplierParty/cac:Party")
-	if supplier == nil {
-		return nil, fmt.Errorf("falta cac:AccountingSupplierParty/cac:Party")
+	supplierParty := root.FindElement("./cac:AccountingSupplierParty")
+	if supplierParty == nil {
+		return nil, fmt.Errorf("falta cac:AccountingSupplierParty")
 	}
 
-	ruc := elementText(supplier, "cac:PartyIdentification/cbc:ID")
+	ruc := elementText(supplierParty, "cbc:CustomerAssignedAccountID")
 	if ruc == "" {
-		return nil, fmt.Errorf("falta el RUC del emisor (PartyIdentification/cbc:ID)")
+		ruc = elementText(supplierParty, "cac:Party/cac:PartyIdentification/cbc:ID")
+	}
+	if ruc == "" {
+		return nil, fmt.Errorf("falta el RUC del emisor")
 	}
 
-	razonSocial := elementText(supplier, "cac:PartyLegalEntity/cbc:RegistrationName")
+	razonSocial := elementText(supplierParty, "cac:Party/cac:PartyName/cbc:Name")
 	if razonSocial == "" {
-		return nil, fmt.Errorf("falta la razón social del emisor (PartyLegalEntity/cbc:RegistrationName)")
+		razonSocial = elementText(supplierParty, "cac:Party/cac:PartyLegalEntity/cbc:RegistrationName")
+	}
+	if razonSocial == "" {
+		return nil, fmt.Errorf("falta la razón social del emisor")
 	}
 
 	montoText := elementText(root, "cac:LegalMonetaryTotal/cbc:PayableAmount")
@@ -86,10 +98,33 @@ func Parse(xmlBytes []byte) (*Parsed, error) {
 	}, nil
 }
 
-// extractRetencion suma los cac:AllowanceCharge que sean descuentos
-// (ChargeIndicator=false) — así es como UBL representa la retención de
-// renta de cuarta categoría en un RHE. Si no hay ninguno, no hubo retención.
+// extractRetencion busca el monto de retención de renta de cuarta categoría.
+// Hay dos formas de representarlo en la práctica:
+//  1. cac:AllowanceCharge con ChargeIndicator=false (un descuento aplicado
+//     sobre el total).
+//  2. Un cac:TaxSubtotal (a nivel de documento o de cada InvoiceLine) cuya
+//     TaxCategory tiene un ID que contiene "RET" (p. ej. "RET 4TA"), con el
+//     monto en cbc:TaxAmount.
+//
+// Devuelve nil si no se encuentra ninguna de las dos formas (no hubo
+// retención en el documento).
 func extractRetencion(root *etree.Element) (*float64, error) {
+	if amount, found, err := retencionFromAllowanceCharge(root); err != nil {
+		return nil, err
+	} else if found {
+		return &amount, nil
+	}
+
+	if amount, found, err := retencionFromTaxSubtotals(root); err != nil {
+		return nil, err
+	} else if found {
+		return &amount, nil
+	}
+
+	return nil, nil
+}
+
+func retencionFromAllowanceCharge(root *etree.Element) (float64, bool, error) {
 	var total float64
 	found := false
 
@@ -104,16 +139,43 @@ func extractRetencion(root *etree.Element) (*float64, error) {
 		}
 		amount, err := strconv.ParseFloat(amountText, 64)
 		if err != nil {
-			return nil, fmt.Errorf("AllowanceCharge/Amount inválido %q: %w", amountText, err)
+			return 0, false, fmt.Errorf("AllowanceCharge/Amount inválido %q: %w", amountText, err)
 		}
 		total += amount
 		found = true
 	}
 
-	if !found {
-		return nil, nil
+	return total, found, nil
+}
+
+func retencionFromTaxSubtotals(root *etree.Element) (float64, bool, error) {
+	var subtotals []*etree.Element
+	subtotals = append(subtotals, root.FindElements("./cac:TaxTotal/cac:TaxSubtotal")...)
+	for _, line := range root.FindElements("./cac:InvoiceLine") {
+		subtotals = append(subtotals, line.FindElements("./cac:TaxTotal/cac:TaxSubtotal")...)
 	}
-	return &total, nil
+
+	var total float64
+	found := false
+
+	for _, sub := range subtotals {
+		categoryID := elementText(sub, "cac:TaxCategory/cbc:ID")
+		if !strings.Contains(strings.ToUpper(categoryID), "RET") {
+			continue
+		}
+		amountText := elementText(sub, "cbc:TaxAmount")
+		if amountText == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(amountText, 64)
+		if err != nil {
+			return 0, false, fmt.Errorf("TaxSubtotal/TaxAmount inválido %q: %w", amountText, err)
+		}
+		total += amount
+		found = true
+	}
+
+	return total, found, nil
 }
 
 func elementText(el *etree.Element, path string) string {

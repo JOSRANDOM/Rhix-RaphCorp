@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><?xml-stylesheet type="text/xsl" href="recibo.xsl"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+	<cbc:ID>E001-1</cbc:ID>
+	<cbc:IssueDate>2026-01-15</cbc:IssueDate>
+	<cbc:InvoiceTypeCode>01</cbc:InvoiceTypeCode>
+	<cbc:Note> DOSCIENTOS CINCUENTA Y 00/100 SOLES</cbc:Note>
+
+	<cac:AccountingSupplierParty>
+		<cbc:CustomerAssignedAccountID>10000000001</cbc:CustomerAssignedAccountID>
+		<cac:Party>
+			<cac:PartyName>
+				<cbc:Name>NOMBRE APELLIDO DE PRUEBA</cbc:Name>
+			</cac:PartyName>
+			<cac:PostalAddress>
+				<cbc:StreetName>DIRECCION DE PRUEBA - LIMA - LIMA</cbc:StreetName>
+				<cac:Country>
+					<cbc:IdentificationCode>PE</cbc:IdentificationCode>
+				</cac:Country>
+			</cac:PostalAddress>
+		</cac:Party>
+	</cac:AccountingSupplierParty>
+
+	<cac:AccountingCustomerParty>
+		<cbc:CustomerAssignedAccountID>20000000002</cbc:CustomerAssignedAccountID>
+		<cac:Party>
+			<cac:PartyName>
+				<cbc:Name>EMPRESA DE PRUEBA SAC</cbc:Name>
+			</cac:PartyName>
+		</cac:Party>
+	</cac:AccountingCustomerParty>
+
+	<cac:TaxTotal>
+		<cbc:TaxAmount currencyID="PEN">0.00</cbc:TaxAmount>
+		<cac:TaxSubtotal>
+			<cbc:TaxableAmount currencyID="PEN">250.00</cbc:TaxableAmount>
+			<cbc:TaxAmount currencyID="PEN">0.00</cbc:TaxAmount>
+			<cac:TaxCategory>
+				<cbc:ID>A</cbc:ID>
+				<cac:TaxScheme/>
+			</cac:TaxCategory>
+		</cac:TaxSubtotal>
+	</cac:TaxTotal>
+	<cac:LegalMonetaryTotal>
+		<cbc:LineExtensionAmount currencyID="PEN">0.00</cbc:LineExtensionAmount>
+		<cbc:TaxExclusiveAmount currencyID="PEN">0.00</cbc:TaxExclusiveAmount>
+		<cbc:PayableAmount currencyID="PEN">230.00</cbc:PayableAmount>
+	</cac:LegalMonetaryTotal>
+	<cac:InvoiceLine>
+		<cbc:ID>0001</cbc:ID>
+		<cac:TaxTotal>
+			<cbc:TaxAmount currencyID="PEN">20.00</cbc:TaxAmount>
+			<cac:TaxSubtotal>
+				<cbc:TaxAmount currencyID="PEN">20.00</cbc:TaxAmount>
+				<cbc:Percent>8.00</cbc:Percent>
+				<cac:TaxCategory>
+					<cbc:ID>RET 4TA</cbc:ID>
+					<cac:TaxScheme/>
+				</cac:TaxCategory>
+			</cac:TaxSubtotal>
+		</cac:TaxTotal>
+		<cac:Item>
+			<cbc:Description>Servicio de prueba</cbc:Description>
+		</cac:Item>
+		<cac:Price>
+			<cbc:PriceAmount currencyID="PEN">250.00</cbc:PriceAmount>
+		</cac:Price>
+	</cac:InvoiceLine>
+</Invoice>
