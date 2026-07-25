@@ -12,13 +12,15 @@ Dos binarios independientes, mismo módulo Go:
 - **`cmd/worker`** — Cron Job de corta duración (pensado para Railway Cron).
   Cada corrida: toma un `pg_try_advisory_lock` para evitar solaparse con otra
   corrida en curso, se conecta por IMAP, busca los correos `UNSEEN`, extrae
-  los adjuntos `.xml`, y (fase futura) los parsea y persiste.
+  los adjuntos `.xml` y los datos del correo (from/to/cc/asunto/cuerpo), los
+  parsea y persiste, y recién ahí marca el correo como `SEEN`.
 - **`cmd/api`** — servicio web persistente. Solo lee lo que el worker ya
   persistió; no tiene ni necesita credenciales IMAP.
 
 ```
 cmd/
-  api/main.go      # GET /health, GET /api/receipts, GET /api/receipts/export
+  api/main.go      # GET /health, /api/receipts, /api/receipts/export,
+                    # /api/receipts/{id}/xml, /api/receipts/{id}/email
   worker/main.go   # ciclo de ingesta
 internal/
   config/          # carga y valida env vars (separado por binario)
@@ -37,6 +39,7 @@ migrations/        # SQL versionado a mano, se corre manualmente contra Supabase
 - [x] **Fase 2** — conexión IMAP real (`internal/inbox`): login, `SEARCH UNSEEN`, `FETCH` + parseo MIME, extracción de adjuntos `.xml` en memoria.
 - [x] **Fase 3** — parser UBL de Recibo por Honorarios Electrónico (`internal/parser`), persistencia vía `internal/receipt` con manejo de duplicados, y `MarkSeen` solo tras persistir con éxito. Verificado extremo a extremo contra Gmail y Supabase reales.
 - [x] **Fase 4** — `GET /api/receipts/export` (`internal/excel`, con `xuri/excelize`) descarga un `.xlsx` con todos los recibos.
+- [x] **Correo original** — `GET /api/receipts/{id}/xml` (el XML crudo) y `GET /api/receipts/{id}/email` (from/to/cc/asunto/cuerpo + lista de adjuntos del mismo correo) para verlo todo desde el frontend. Solo aplica a recibos procesados desde que se agregó esto — los anteriores no tienen estos datos guardados.
 
 ### Nota sobre el Transaction Pooler
 
@@ -81,6 +84,7 @@ No hay herramienta de migraciones automatizada todavía — los archivos en
 ```bash
 set -a && source .env && set +a
 psql "$DATABASE_URL" -f migrations/0001_create_receipts.sql
+psql "$DATABASE_URL" -f migrations/0002_add_email_details.sql
 ```
 
 ## Correr en local
