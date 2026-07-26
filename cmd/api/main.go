@@ -46,6 +46,13 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"imapUser": cfg.ImapUser,
+		})
+	})
+
 	mux.HandleFunc("GET /api/receipts", func(w http.ResponseWriter, r *http.Request) {
 		receipts, err := repo.List(r.Context())
 		if err != nil {
