@@ -31,13 +31,13 @@ func main() {
 	}
 
 	ctx := context.Background()
-	conn, err := db.Connect(ctx, cfg.DatabaseURL)
+	pool, err := db.ConnectPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close(ctx)
+	defer pool.Close()
 
-	repo := receipt.NewRepository(conn)
+	repo := receipt.NewRepository(pool)
 	storageClient := storage.New(cfg)
 
 	mux := http.NewServeMux()

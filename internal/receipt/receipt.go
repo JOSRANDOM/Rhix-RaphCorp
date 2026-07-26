@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"rhix-backend/internal/db"
 )
 
 // ErrNotFound indica que no existe un recibo (o un archivo suyo) con el ID solicitado.
@@ -81,10 +83,10 @@ type PDFLocation struct {
 }
 
 type Repository struct {
-	conn *pgx.Conn
+	conn db.Querier
 }
 
-func NewRepository(conn *pgx.Conn) *Repository {
+func NewRepository(conn db.Querier) *Repository {
 	return &Repository{conn: conn}
 }
 
